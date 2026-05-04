@@ -1,10 +1,10 @@
 from flask import Flask, request, jsonify
-from flask_cors import CORS  # Allows CodePen to connect
+from flask_cors import CORS
 import yt_dlp
 import os
 
 app = Flask(__name__)
-CORS(app)  # Activates the connection for outside websites
+CORS(app)
 
 @app.route('/')
 def home():
@@ -16,18 +16,27 @@ def download():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     
-    # Options to help bypass Pinterest security
     ydl_opts = {
-        'format': 'best',
         'quiet': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'no_warnings': True,
+        # This helps when the specific Pinterest extractor fails
+        'force_generic_extractor': True, 
+        'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'referer': 'https://www.pinterest.com/',
     }
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            
+            # Check multiple locations where the video URL might be hidden
+            video_url = info.get('url') or (info.get('entries') and info.get('entries')[0].get('url'))
+            
+            if not video_url:
+                return jsonify({"error": "Could not extract video link. Pinterest might be blocking this specific pin."}), 404
+
             return jsonify({
-                "video_url": info.get('url'),
+                "video_url": video_url,
                 "title": info.get('title', 'Pinterest Video')
             })
     except Exception as e:
