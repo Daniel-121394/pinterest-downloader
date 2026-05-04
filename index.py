@@ -1,9 +1,15 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import yt_dlp
+import requests
+import os
 
 app = Flask(__name__)
 CORS(app)
+
+@app.route('/')
+def home():
+    return "Pinterest Downloader API is Active"
 
 @app.route('/download')
 def download():
@@ -14,28 +20,38 @@ def download():
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        # We use a standard user agent and a 'compatibility' format
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'referer': 'https://www.pinterest.com/',
-        'format': 'bestvideo+bestaudio/best', # Force search for any media
     }
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # We use extract_info but catch specifically if the format is missing
             info = ydl.extract_info(url, download=False)
-            video_url = info.get('url')
-            
-            if not video_url and 'formats' in info:
-                # Look manually through available formats if the main one fails
-                video_url = info['formats'][0]['url']
-
             return jsonify({
-                "video_url": video_url,
-                "title": info.get('title', 'Pinterest Video')
+                "video_url": info.get('url'),
+                "title": info.get('title', 'Pinterest Video'),
+                "thumbnail": info.get('thumbnail')
             })
     except Exception as e:
-        return jsonify({"error": "Pinterest is blocking this request. Free servers like Vercel/PythonAnywhere are often flagged by their security."}), 500
+        return jsonify({"error": str(e)}), 500
+
+# THE KEY FIX: This route forces the download
+@app.route('/proxy')
+def proxy():
+    video_url = request.args.get('url')
+    if not video_url:
+        return "No URL", 400
+    
+    # Stream the video from Pinterest through your server
+    r = requests.get(video_url, stream=True)
+    
+    # Set headers to force "Save As" dialog
+    headers = {
+        'Content-Disposition': 'attachment; filename="pinterest_video.mp4"',
+        'Content-Type': 'video/mp4'
+    }
+    
+    return Response(r.iter_content(chunk_size=1024*1024), headers=headers)
 
 if __name__ == "__main__":
-    app.run()
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
