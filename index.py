@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Allows CodePen to connect
 import yt_dlp
 import os
 
 app = Flask(__name__)
+CORS(app)  # Activates the connection for outside websites
 
 @app.route('/')
 def home():
@@ -14,10 +16,11 @@ def download():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     
+    # Options to help bypass Pinterest security
     ydl_opts = {
         'format': 'best',
         'quiet': True,
-        'no_warnings': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
     
     try:
