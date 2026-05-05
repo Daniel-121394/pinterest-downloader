@@ -3,3 +3,4 @@ flask-cors
 yt-dlp
 curl-cffi
 requests
+youtube-search-python
