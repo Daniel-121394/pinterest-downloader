@@ -1,69 +1,80 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from flask_cors import CORS
-import yt_dlp
-import os
+from duckduckgo_search import DDGS
 import requests
+from tavily import TavilyClient
+from serpapi import GoogleSearch
 
 app = Flask(__name__)
 CORS(app)
 
+# --- YOUR KEYS (Hardcoded for convenience) ---
+SERPER_KEY = "b3a0b26a1540f36fa12be26d049867fadf5c3161"
+TAVILY_KEY = "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"
+SERP_API_KEY = "c86a424289bd817fab44befd9549e62bfaf1cd09bde4d925610ef50d688f5fa4"
+
 @app.route('/')
 def home():
-    return "YouTube Downloader API is Online"
+    return "US Digital Guiders - Plagiarism Super-Checker is ACTIVE"
 
-@app.route('/download')
-def download():
-    video_url = request.args.get('url')
-    if not video_url:
-        return jsonify({"error": "No URL"}), 400
+@app.route('/check', methods=['POST'])
+def check_plagiarism():
+    data = request.get_json()
+    text = data.get('text', '')
+    
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
 
-    cookie_path = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+    results = []
 
-    # 2026 High-Security Options
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'format': 'best',
-        'cookiefile': cookie_path,
-        # Rotate between different clients to find one not blocked
-        'client_name': 'web', 
-        'client_version': '2.20240101.01.00',
-        'impersonate': 'chrome',
-        'nocheckcertificate': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-        }
-    }
-
+    # --- STEP 1: DUCKDUCKGO (100% FREE) ---
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            return jsonify({
-                "video_url": info.get('url'),
-                "title": info.get('title'),
-                "thumbnail": info.get('thumbnail')
-            })
+        with DDGS() as ddgs:
+            # Quotes around {text} forces an exact phrase match
+            ddg_matches = list(ddgs.text(f'"{text}"', max_results=2))
+            for r in ddg_matches:
+                results.append({"source": "DuckDuckGo", "url": r['href'], "title": r['title']})
     except Exception as e:
-        # Fallback to Android client if Web is blocked
+        print(f"DDG Error: {e}")
+
+    # --- STEP 2: SERPER.DEV (BACKUP 1) ---
+    if not results and SERPER_KEY:
         try:
-            ydl_opts['client_name'] = 'android'
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(video_url, download=False)
-                return jsonify({
-                    "video_url": info.get('url'),
-                    "title": info.get('title'),
-                    "thumbnail": info.get('thumbnail')
-                })
+            headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
+            res = requests.post("https://google.serper.dev/search", 
+                                json={"q": f'"{text}"'}, headers=headers, timeout=5).json()
+            for r in res.get('organic', [])[:2]:
+                results.append({"source": "Google (Serper)", "url": r['link'], "title": r['title']})
         except:
-            return jsonify({"error": "YouTube Security is extremely tight. Wait 5 minutes."}), 500
+            pass
 
-@app.route('/proxy')
-def proxy():
-    url = request.args.get('url')
-    r = requests.get(url, stream=True)
-    return Response(r.iter_content(chunk_size=1024*1024), content_type='video/mp4')
+    # --- STEP 3: TAVILY AI (BACKUP 2) ---
+    if not results and TAVILY_KEY:
+        try:
+            tavily = TavilyClient(api_key=TAVILY_KEY)
+            t_res = tavily.search(query=text, search_depth="basic")
+            for r in t_res.get('results', [])[:2]:
+                results.append({"source": "Tavily AI", "url": r['url'], "title": r['title']})
+        except:
+            pass
 
+    # --- STEP 4: SERPAPI (FINAL BACKUP) ---
+    if not results and SERP_API_KEY:
+        try:
+            search = GoogleSearch({"q": f'"{text}"', "api_key": SERP_API_KEY})
+            serp_res = search.get_dict()
+            for r in serp_res.get('organic_results', [])[:2]:
+                results.append({"source": "Google (SerpApi)", "url": r['link'], "title": r['title']})
+        except:
+            pass
+
+    return jsonify({
+        "is_unique": len(results) == 0,
+        "matches": results,
+        "total_matches": len(results),
+        "status": "Plagiarized" if results else "Original"
+    })
+
+# Required for Vercel
 def handler(event, context):
     return app(event, context)
