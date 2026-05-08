@@ -11,12 +11,13 @@ CORS(app)
 # API KEYS
 SERPER_KEY = "b3a0b26a1540f36fa12be26d049867fadf5c3161"
 TAVILY_KEY = "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"
-SERP_API_KEY = "c86a424289bd817fab44befd9549e62bfaf1cd09bde4d925610ef50d688f5fa4"
+
+# ADD SITES YOU WANT TO IGNORE HERE
+SKIP_SITES = ["indeed.com", "reddit.com", "wikipedia.org", "facebook.com"]
 
 def get_site_name(url):
-    """Extracts 'wikipedia.org' from a long URL"""
     try:
-        domain = urlparse(url).netloc
+        domain = urlparse(url).netloc.lower()
         return domain.replace('www.', '')
     except:
         return "Unknown Site"
@@ -37,35 +38,38 @@ def check_plagiarism():
             if len(sentence.split()) < 5: continue
 
             found_url = None
+            site_name = None
 
-            # 1. DuckDuckGo
+            # Logic: Try DuckDuckGo first, then Serper, then Tavily
+            # But SKIP results from the sites in SKIP_SITES
             try:
-                res = list(ddgs.text(f'"{sentence}"', max_results=1))
-                if res: found_url = res[0]['href']
+                res = list(ddgs.text(f'"{sentence}"', max_results=5))
+                for r in res:
+                    s_name = get_site_name(r['href'])
+                    if not any(skip in s_name for skip in SKIP_SITES):
+                        found_url = r['href']
+                        site_name = s_name
+                        break
             except: pass
 
-            # 2. Serper
             if not found_url and SERPER_KEY:
                 try:
                     res = requests.post("https://google.serper.dev/search", 
                                         json={"q": f'"{sentence}"'}, 
                                         headers={'X-API-KEY': SERPER_KEY}).json()
-                    if res.get('organic'): found_url = res['organic'][0]['link']
-                except: pass
-
-            # 3. Tavily
-            if not found_url and TAVILY_KEY:
-                try:
-                    res = requests.post("https://api.tavily.com/search", 
-                                        json={"api_key": TAVILY_KEY, "query": f'"{sentence}"'}).json()
-                    if res.get('results'): found_url = res['results'][0]['url']
+                    for r in res.get('organic', []):
+                        s_name = get_site_name(r['link'])
+                        if not any(skip in s_name for skip in SKIP_SITES):
+                            found_url = r['link']
+                            site_name = s_name
+                            break
                 except: pass
 
             analysis.append({
                 "sentence": sentence,
                 "plagiarized": True if found_url else False,
                 "url": found_url,
-                "sitename": get_site_name(found_url) if found_url else None
+                "sitename": site_name
             })
 
     return jsonify({"analysis": analysis})
