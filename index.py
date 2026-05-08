@@ -2,79 +2,94 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from duckduckgo_search import DDGS
 import requests
-from tavily import TavilyClient
-from serpapi import GoogleSearch
+import re
 
 app = Flask(__name__)
 CORS(app)
 
-# --- YOUR KEYS (Hardcoded for convenience) ---
+# --- YOUR 3 API KEYS ---
 SERPER_KEY = "b3a0b26a1540f36fa12be26d049867fadf5c3161"
 TAVILY_KEY = "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"
 SERP_API_KEY = "c86a424289bd817fab44befd9549e62bfaf1cd09bde4d925610ef50d688f5fa4"
 
 @app.route('/')
 def home():
-    return "US Digital Guiders - Plagiarism Super-Checker is ACTIVE"
+    return "US Digital Guiders - Triple API Power-Checker is ACTIVE"
 
 @app.route('/check', methods=['POST'])
 def check_plagiarism():
     data = request.get_json()
-    text = data.get('text', '')
+    full_text = data.get('text', '')
     
-    if not text:
-        return jsonify({"error": "No text provided"}), 400
+    if not full_text:
+        return jsonify({"error": "No text"}), 400
 
-    results = []
+    sentences = re.split(r'(?<=[.!?]) +', full_text)
+    analysis = []
 
-    # --- STEP 1: DUCKDUCKGO (100% FREE) ---
-    try:
-        with DDGS() as ddgs:
-            # Quotes around {text} forces an exact phrase match
-            ddg_matches = list(ddgs.text(f'"{text}"', max_results=2))
-            for r in ddg_matches:
-                results.append({"source": "DuckDuckGo", "url": r['href'], "title": r['title']})
-    except Exception as e:
-        print(f"DDG Error: {e}")
+    with DDGS() as ddgs:
+        # Checking top 15 sentences for speed and API safety
+        for sentence in sentences[:15]:
+            sentence = sentence.strip()
+            if len(sentence.split()) < 5:
+                analysis.append({"sentence": sentence, "plagiarized": False, "url": None, "source": "Internal"})
+                continue
 
-    # --- STEP 2: SERPER.DEV (BACKUP 1) ---
-    if not results and SERPER_KEY:
-        try:
-            headers = {'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json'}
-            res = requests.post("https://google.serper.dev/search", 
-                                json={"q": f'"{text}"'}, headers=headers, timeout=5).json()
-            for r in res.get('organic', [])[:2]:
-                results.append({"source": "Google (Serper)", "url": r['link'], "title": r['title']})
-        except:
-            pass
+            match_found = False
+            found_url = None
+            used_api = ""
 
-    # --- STEP 3: TAVILY AI (BACKUP 2) ---
-    if not results and TAVILY_KEY:
-        try:
-            tavily = TavilyClient(api_key=TAVILY_KEY)
-            t_res = tavily.search(query=text, search_depth="basic")
-            for r in t_res.get('results', [])[:2]:
-                results.append({"source": "Tavily AI", "url": r['url'], "title": r['title']})
-        except:
-            pass
+            # API 1: DuckDuckGo (Free - First attempt)
+            try:
+                ddg_res = list(ddgs.text(f'"{sentence}"', max_results=1))
+                if ddg_res:
+                    match_found = True
+                    found_url = ddg_res[0]['href']
+                    used_api = "DuckDuckGo"
+            except: pass
 
-    # --- STEP 4: SERPAPI (FINAL BACKUP) ---
-    if not results and SERP_API_KEY:
-        try:
-            search = GoogleSearch({"q": f'"{text}"', "api_key": SERP_API_KEY})
-            serp_res = search.get_dict()
-            for r in serp_res.get('organic_results', [])[:2]:
-                results.append({"source": "Google (SerpApi)", "url": r['link'], "title": r['title']})
-        except:
-            pass
+            # API 2: Serper.dev (Backup 1)
+            if not match_found and SERPER_KEY:
+                try:
+                    res = requests.post("https://google.serper.dev/search", 
+                                        json={"q": f'"{sentence}"'}, 
+                                        headers={'X-API-KEY': SERPER_KEY}, timeout=2).json()
+                    if res.get('organic'):
+                        match_found = True
+                        found_url = res['organic'][0]['link']
+                        used_api = "Serper"
+                except: pass
 
-    return jsonify({
-        "is_unique": len(results) == 0,
-        "matches": results,
-        "total_matches": len(results),
-        "status": "Plagiarized" if results else "Original"
-    })
+            # API 3: Tavily (Backup 2 - High Accuracy)
+            if not match_found and TAVILY_KEY:
+                try:
+                    res = requests.post("https://api.tavily.com/search", 
+                                        json={"api_key": TAVILY_KEY, "query": f'"{sentence}"', "search_depth": "basic"}).json()
+                    if res.get('results'):
+                        match_found = True
+                        found_url = res['results'][0]['url']
+                        used_api = "Tavily"
+                except: pass
 
-# Required for Vercel
+            # API 4: SerpApi (Last Resort - Google Maps/Standard Search)
+            if not match_found and SERP_API_KEY:
+                try:
+                    params = {"q": f'"{sentence}"', "api_key": SERP_API_KEY}
+                    res = requests.get("https://serpapi.com/search", params=params).json()
+                    if res.get('organic_results'):
+                        match_found = True
+                        found_url = res['organic_results'][0]['link']
+                        used_api = "SerpApi"
+                except: pass
+
+            analysis.append({
+                "sentence": sentence,
+                "plagiarized": match_found,
+                "url": found_url,
+                "api": used_api
+            })
+
+    return jsonify({"analysis": analysis})
+
 def handler(event, context):
     return app(event, context)
