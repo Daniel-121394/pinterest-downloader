@@ -1,3 +1,6 @@
 flask
 flask-cors
 duckduckgo-search
+requests
+tavily-python
+google-search-results
